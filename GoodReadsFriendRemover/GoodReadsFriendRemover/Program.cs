@@ -1,7 +1,10 @@
-﻿using HtmlAgilityPack;
+﻿using Fiddler;
+using HtmlAgilityPack;
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace GoodReadsFriendRemover
 {
@@ -19,13 +22,21 @@ namespace GoodReadsFriendRemover
         /// </summary>
         static string COOKIE_HEADER = string.Empty;
 
-
         static Dictionary<int, string> UserNameDictionary = new Dictionary<int, string>();
         const string GET_FRIEND_URI = "https://www.goodreads.com/friend?page={0}";
         const string DESTROY_FRIEND_URI = "https://www.goodreads.com/friend/destroy/{0}?return_url=%2Ffriend";
 
         static void Main(string[] args)
         {
+            StartListeningWithFiddler();
+
+            while (string.IsNullOrEmpty(POST_DATA) && string.IsNullOrEmpty(COOKIE_HEADER))
+            { }
+
+            Thread.Sleep(2000);
+
+            Console.WriteLine("Querying for all of your friends...");
+
             using (WebClient getFriendWC = new WebClient())
             {
                 getFriendWC.Headers.Add(HttpRequestHeader.Cookie, COOKIE_HEADER);
@@ -86,6 +97,9 @@ namespace GoodReadsFriendRemover
                         }
                     }
                 }
+
+                Console.WriteLine("Cleanup complete!  Hit enter to exit");
+                Console.ReadLine();
             }
         }
 
@@ -110,6 +124,79 @@ namespace GoodReadsFriendRemover
             {
                 return false;
             }
+        }
+
+        public static void WriteCommandResponse(string s)
+        {
+            ConsoleColor oldColor = Console.ForegroundColor;
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine(s);
+            Console.ForegroundColor = oldColor;
+        }
+
+        public static void DetachFiddler()
+        {
+            Console.WriteLine("Shutting down FiddlerCore...");
+            FiddlerApplication.Shutdown();
+            Thread.Sleep(500);
+        }
+        private static string Ellipsize(string s, int iLen)
+        {
+            if (s.Length <= iLen) return s;
+            return s.Substring(0, iLen - 3) + "...";
+        }
+
+        static void StartListeningWithFiddler()
+        {
+            var oAllSessions = new List<Session>();
+            #region AttachEventListeners
+
+            FiddlerApplication.BeforeRequest += delegate (Fiddler.Session oS)
+            {
+                if (oS.uriContains("www.goodreads.com/friend/destroy") && oS.RequestMethod == "POST")
+                {
+                    string post_data = System.Text.Encoding.UTF8.GetString(oS.RequestBody);
+                    var cookie_header = oS.RequestHeaders.AllValues("Cookie");
+                    POST_DATA = post_data;
+                    COOKIE_HEADER = cookie_header;
+                    Console.WriteLine("Cookie and Post information found! Gracefully terminating FiddlerCore and proceeding..");
+                    DetachFiddler();
+                }
+            };
+
+            // Tell the system console to handle CTRL+C by calling our method that
+            // gracefully shuts down the FiddlerCore.
+            // Note, this doesn't handle the case where the user closes the window with the close button.
+            // See http://geekswithblogs.net/mrnat/archive/2004/09/23/11594.aspx for info on that...
+            Console.CancelKeyPress += new ConsoleCancelEventHandler(Console_CancelKeyPress);
+
+            #endregion AttachEventListeners
+
+            Console.WriteLine(String.Format("Starting {0}...", FiddlerApplication.GetVersionString()));
+
+            Console.WriteLine("Steps:" + Environment.NewLine +
+                "1. Navigate to http://www.goodreads.com" + Environment.NewLine +
+                "2. Log in (if you haven't already)" + Environment.NewLine +
+                "3. Go to your friends page, and delete someone (this will not take effect)" + Environment.NewLine);
+                
+            // For the purposes of this demo, we'll forbid connections to HTTPS 
+            // sites that use invalid certificates
+            CONFIG.IgnoreServerCertErrors = false;
+
+            // Because we've chosen to decrypt HTTPS traffic, makecert.exe must
+            // be present in the Application folder.
+            FiddlerApplication.Startup(8877, true, true);
+            Console.WriteLine("Hit CTRL+C to end session.");
+        }
+
+        /// <summary>
+        /// When the user hits CTRL+C, this event fires.  We use this to shut down and unregister our FiddlerCore.
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        static void Console_CancelKeyPress(object sender, ConsoleCancelEventArgs e)
+        {
+            DetachFiddler();
         }
     }
 }
